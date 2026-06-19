@@ -9,6 +9,10 @@ from datetime import datetime
 # 1. Configuración de la página
 st.set_page_config(page_title="Gestión de Activos y Vulnerabilidades", page_icon="🛡️", layout="wide")
 
+# Inicialización segura de estado (Para evitar el AttributeError cuando no hay datos)
+if 'vista_actual' not in st.session_state:
+    st.session_state.vista_actual = "GLOBAL"
+
 # 2. Diseño Moderno (CSS - Purple Team)
 st.markdown("""
     <style>
@@ -44,71 +48,95 @@ st.markdown("""
 st.title("🛡️ Gestión de Activos y Vulnerabilidades")
 st.markdown("---")
 
-# 3. FUNCIONES DE LECTURA Y CORRELACIÓN PESADA
-@st.cache_data(ttl=10)
-def obtener_tipos_reportes():
+# 3. FUNCIONES INTELIGENTES DE LECTURA (Solo los más recientes)
+def obtener_archivos_mas_recientes():
     archivos = glob.glob('historico_csv/**/*.csv', recursive=True)
-    return list(set([os.path.basename(f).split('_')[0] if '_' in os.path.basename(f) and os.path.basename(f).split('_')[-1].replace('.csv','').isdigit() else os.path.basename(f).replace('.csv','') for f in archivos]))
+    if not archivos: return []
+    
+    archivos_por_tipo = {}
+    for f in archivos:
+        nombre_archivo = os.path.basename(f)
+        partes = nombre_archivo.split('_')
+        nombre_base = '_'.join(partes[:-1]) if len(partes) > 1 and partes[-1].replace('.csv', '').isdigit() else nombre_archivo.replace('.csv', '')
+        
+        tiempo_mod = os.path.getmtime(f)
+        if nombre_base not in archivos_por_tipo or tiempo_mod > archivos_por_tipo[nombre_base]['tiempo']:
+            archivos_por_tipo[nombre_base] = {'ruta': f, 'tiempo': tiempo_mod, 'nombre_base': nombre_base}
+            
+    return list(archivos_por_tipo.values())
 
-def cargar_tabla_especifica(nombre_base):
+def cargar_tabla_especifica(ruta_archivo):
     try:
         con = duckdb.connect(':memory:')
-        query = f"SELECT DISTINCT * FROM read_csv_auto('historico_csv/**/*{nombre_base}*.csv', union_by_name=True, ignore_errors=True)"
+        query = f"SELECT DISTINCT * FROM read_csv_auto('{ruta_archivo}', ignore_errors=True)"
         return con.execute(query).df().drop_duplicates()
     except Exception:
         return pd.DataFrame()
 
 def actualizar_base_maestra():
-    nombres_archivos = obtener_tipos_reportes()
+    archivos_recientes = obtener_archivos_mas_recientes()
+    if not archivos_recientes: return
+
     dfs_to_merge = []
     
-    for name in nombres_archivos:
-        df = cargar_tabla_especifica(name)
+    for info in archivos_recientes:
+        df = cargar_tabla_especifica(info['ruta'])
         if not df.empty:
             col_mapping = {col: 'DeviceName' for col in df.columns if str(col).lower().replace(' ', '').replace('_', '') in ['devicename', 'nombreequipo', 'hostname', 'equipo', 'dispositivo']}
             df.rename(columns=col_mapping, inplace=True)
             
             if 'AreaInfraestructura' not in df.columns:
-                df['AreaInfraestructura'] = name
+                df['AreaInfraestructura'] = info['nombre_base']
             else:
-                df['AreaInfraestructura'] = df['AreaInfraestructura'].fillna(name)
+                df['AreaInfraestructura'] = df['AreaInfraestructura'].fillna(info['nombre_base'])
                 
             dfs_to_merge.append(df)
 
     if not dfs_to_merge: return
     
-    df_nueva = dfs_to_merge[0]
+    df_hoy = dfs_to_merge[0]
     for i in range(1, len(dfs_to_merge)):
-        if 'DeviceName' in df_nueva.columns and 'DeviceName' in dfs_to_merge[i].columns:
-            df_nueva = pd.merge(df_nueva, dfs_to_merge[i], on='DeviceName', how='outer', suffixes=('', '_dup'))
-            for col in list(df_nueva.columns):
+        if 'DeviceName' in df_hoy.columns and 'DeviceName' in dfs_to_merge[i].columns:
+            df_hoy = pd.merge(df_hoy, dfs_to_merge[i], on='DeviceName', how='outer', suffixes=('', '_dup'))
+            for col in list(df_hoy.columns):
                 if col.endswith('_dup'):
                     orig_col = col.replace('_dup', '')
-                    df_nueva[orig_col] = df_nueva[orig_col].combine_first(df_nueva[col])
-                    df_nueva.drop(columns=[col], inplace=True)
+                    df_hoy[orig_col] = df_hoy[orig_col].combine_first(df_hoy[col])
+                    df_hoy.drop(columns=[col], inplace=True)
         else:
-            df_nueva = pd.concat([df_nueva, dfs_to_merge[i]], ignore_index=True)
+            df_hoy = pd.concat([df_hoy, dfs_to_merge[i]], ignore_index=True)
 
     columnas_deseadas = ['DeviceName', 'compliance', 'AreaInfraestructura', 'sistemaOperativo', 'ComponenteNoConforme', 'SoftwareVersion', 'CveId', 'VulnerabilitySeverityLevel', 'RecommendedSecurityUpdate']
-    df_nueva = df_nueva[[col for col in columnas_deseadas if col in df_nueva.columns]].drop_duplicates()
-    df_nueva.reset_index(drop=True, inplace=True)
+    df_hoy = df_hoy[[col for col in columnas_deseadas if col in df_hoy.columns]].drop_duplicates()
+    
+    df_hoy['Key'] = df_hoy['DeviceName'].astype(str) + "-" + df_hoy.get('CveId', pd.Series(['']*len(df_hoy))).astype(str)
 
     os.makedirs('datos_correlacionados', exist_ok=True)
     ruta_maestra = 'datos_correlacionados/base_global_maestra.csv'
     
     if os.path.exists(ruta_maestra):
-        df_vieja = pd.read_csv(ruta_maestra)
-        if 'Estado' in df_vieja.columns and 'DeviceName' in df_vieja.columns:
-            df_vieja['Key'] = df_vieja['DeviceName'].astype(str) + "-" + df_vieja.get('CveId', '').astype(str)
-            df_nueva['Key'] = df_nueva['DeviceName'].astype(str) + "-" + df_nueva.get('CveId', '').astype(str)
+        df_maestra = pd.read_csv(ruta_maestra)
+        
+        if 'Key' not in df_maestra.columns:
+            df_maestra['Key'] = df_maestra.get('DeviceName', '').astype(str) + "-" + df_maestra.get('CveId', '').astype(str)
             
-            estado_map = dict(zip(df_vieja['Key'], df_vieja['Estado']))
-            df_nueva['Estado'] = df_nueva['Key'].map(estado_map).fillna('🔴 Activo')
-            df_nueva.drop(columns=['Key'], inplace=True)
-        else:
-            df_nueva.insert(0, 'Estado', '🔴 Activo')
+        keys_hoy = set(df_hoy['Key'])
+        keys_viejas = set(df_maestra['Key'])
+        
+        keys_ausentes = keys_viejas - keys_hoy
+        df_ausentes = df_maestra[df_maestra['Key'].isin(keys_ausentes)].copy()
+        df_ausentes['Estado'] = '✅ Auto-Mitigado'
+        
+        df_hoy['Estado'] = '🔴 Activo'
+        
+        df_nueva = pd.concat([df_hoy, df_ausentes], ignore_index=True)
     else:
-        df_nueva.insert(0, 'Estado', '🔴 Activo')
+        df_hoy['Estado'] = '🔴 Activo'
+        df_nueva = df_hoy
+
+    # Limpiamos la columna Key para no ensuciar la data al guardar
+    if 'Key' in df_nueva.columns:
+        df_nueva.drop(columns=['Key'], inplace=True)
 
     df_nueva.to_csv(ruta_maestra, index=False)
 
@@ -116,11 +144,11 @@ def actualizar_base_maestra():
 st.sidebar.header("⚙️ Administración")
 
 if st.sidebar.button("🔄 Procesar Nuevos CSVs"):
-    with st.spinner("1. Convirtiendo archivos y 2. Calculando Correlación Maestra..."):
+    with st.spinner("Comparando realidad actual vs historial..."):
         try:
             subprocess.run(["python", "src/data/data_processor.py"], capture_output=True, text=True)
             actualizar_base_maestra()
-            st.sidebar.success("¡Datos procesados y Base Maestra actualizada!")
+            st.sidebar.success("¡Base Maestra sincronizada con la realidad!")
             st.cache_data.clear()
             st.rerun()
         except Exception as e:
@@ -135,32 +163,33 @@ if st.sidebar.button("🌟 Vista Global Correlacionada"):
 st.markdown('</div>', unsafe_allow_html=True)
 
 st.sidebar.markdown("---")
-st.sidebar.header("📁 Vistas Individuales (Crudas)")
+st.sidebar.header("📁 Vistas Individuales (Último CSV)")
 
-tipos_disponibles = obtener_tipos_reportes()
-if 'vista_actual' not in st.session_state:
-    st.session_state.vista_actual = "GLOBAL"
+archivos_recientes_info = obtener_archivos_mas_recientes()
+tipos_disponibles = [info['nombre_base'] for info in archivos_recientes_info]
 
-for tipo in tipos_disponibles:
-    if st.sidebar.button(f"📄 {tipo}"):
-        st.session_state.vista_actual = tipo
+if not tipos_disponibles:
+    st.warning("No hay datos en la carpeta 'historico_csv'. Coloca tus archivos en 'datos_diarios' y procesa.")
+else:
+    for tipo in tipos_disponibles:
+        if st.sidebar.button(f"📄 {tipo}"):
+            st.session_state.vista_actual = tipo
 
 # ================= PANTALLA PRINCIPAL =================
 if st.session_state.vista_actual == "GLOBAL":
-    titulo_vista = "Vista Global Correlacionada (Carga Rápida)"
+    titulo_vista = "Vista Global Correlacionada (Sincronizada)"
     ruta_maestra = 'datos_correlacionados/base_global_maestra.csv'
     if os.path.exists(ruta_maestra):
         df_actual = pd.read_csv(ruta_maestra)
     else:
-        st.warning("No existe la base maestra. Haz clic en 'Procesar Nuevos CSVs' para generarla.")
+        st.info("La Base Maestra aún no existe. Sube archivos CSV y presiona 'Procesar Nuevos CSVs'.")
         df_actual = pd.DataFrame()
 else:
-    df_actual = cargar_tabla_especifica(st.session_state.vista_actual)
+    ruta_especifica = next((info['ruta'] for info in archivos_recientes_info if info['nombre_base'] == st.session_state.vista_actual), None)
+    df_actual = cargar_tabla_especifica(ruta_especifica) if ruta_especifica else pd.DataFrame()
     if 'Estado' not in df_actual.columns and not df_actual.empty:
         df_actual.insert(0, 'Estado', '🔴 Activo')
-    if not df_actual.empty:
-        df_actual.reset_index(drop=True, inplace=True)
-    titulo_vista = f"Reporte Individual: {st.session_state.vista_actual}"
+    titulo_vista = f"Reporte Individual (Más reciente): {st.session_state.vista_actual}"
 
 if not df_actual.empty:
     df_filtrado = df_actual.copy()
@@ -170,8 +199,7 @@ if not df_actual.empty:
     # --- SECCIÓN DE FILTROS ---
     st.markdown("#### 🎛️ Panel de Filtros y Búsqueda")
     
-    # BUSCADOR GLOBAL OPTIMIZADO (Vectorizado)
-    busqueda_global = st.text_input("🔎 Buscador Global Rápido (CVE, Software, Nombre de Equipo, etc.):")
+    busqueda_global = st.text_input("🔎 Buscador Global Rápido (CVE, Software, Equipo):")
     if busqueda_global:
         mascara_busqueda = pd.Series(False, index=df_filtrado.index)
         for col in df_filtrado.columns:
@@ -185,7 +213,7 @@ if not df_actual.empty:
             if filtro_estado == "🔴 Solo Activas":
                 df_filtrado = df_filtrado[df_filtrado['Estado'] == '🔴 Activo']
             elif filtro_estado == "✅ Solo Mitigadas":
-                df_filtrado = df_filtrado[df_filtrado['Estado'] == '✅ Mitigado']
+                df_filtrado = df_filtrado[df_filtrado['Estado'].astype(str).str.contains('Mitigado', case=False, na=False)]
 
     with col_filtro2:
         sev_col = 'VulnerabilitySeverityLevel' if 'VulnerabilitySeverityLevel' in df_filtrado.columns else ('Severity' if 'Severity' in df_filtrado.columns else None)
@@ -219,7 +247,7 @@ if not df_actual.empty:
 
     # --- CÁLCULO DE KPIs PRINCIPALES ---
     activos_afectados = df_filtrado['DeviceName'].nunique() if 'DeviceName' in df_filtrado.columns else len(df_filtrado)
-    total_mitigados = len(df_filtrado[df_filtrado['Estado'] == '✅ Mitigado']) if 'Estado' in df_filtrado.columns else 0
+    total_mitigados = len(df_filtrado[df_filtrado['Estado'].astype(str).str.contains('Mitigado', case=False, na=False)]) if 'Estado' in df_filtrado.columns else 0
     total_activos = len(df_filtrado[df_filtrado['Estado'] == '🔴 Activo']) if 'Estado' in df_filtrado.columns else 0
     
     criticas_activas = 0
@@ -237,10 +265,9 @@ if not df_actual.empty:
     with col4:
         st.markdown(f'<div class="metric-card kpi-critico"><h3>Críticas SIN Mitigar</h3><h2>{criticas_activas}</h2></div>', unsafe_allow_html=True)
 
-    # --- KPIs DE CUMPLIMIENTO (COMPLIANCE VS REALIDAD) ---
+    # --- KPIs DE CUMPLIMIENTO ---
     if 'compliance' in df_filtrado.columns:
         st.markdown("#### 🛡️ Brecha de Cumplimiento (Falsa Sensación de Seguridad)")
-        
         equipos_compliant_vuln = df_filtrado[df_filtrado['compliance'].astype(str).str.contains('Compliant|Cumple', case=False, na=False)]['DeviceName'].nunique()
         equipos_non_compliant = df_filtrado[df_filtrado['compliance'].astype(str).str.contains('Non|No Cumple|Not', case=False, na=False)]['DeviceName'].nunique()
         
@@ -266,6 +293,15 @@ if not df_actual.empty:
                                 f'<h2 style="font-size: 1.8rem;">{count} <span style="font-size: 1rem; color: #BDBDBD; font-weight: normal;">alertas</span></h2>'
                                 f'</div>', unsafe_allow_html=True)
 
+    # --- PREPARAR TABLA PARA MOSTRAR (Ocultar Key y ordenar Estado) ---
+    if 'Key' in df_filtrado.columns:
+        df_filtrado = df_filtrado.drop(columns=['Key'])
+        
+    if 'Estado' in df_filtrado.columns:
+        # Forzar a que la columna 'Estado' sea siempre la primera
+        cols = ['Estado'] + [col for col in df_filtrado.columns if col != 'Estado']
+        df_filtrado = df_filtrado[cols]
+
     # --- TABLA EDITABLE ---
     st.markdown("*(Cambia el estado haciendo doble clic en la columna **Estado**)*")
     df_editado = st.data_editor(
@@ -274,7 +310,7 @@ if not df_actual.empty:
         num_rows="dynamic",
         key=f"editor_{st.session_state.vista_actual}",
         column_config={
-            "Estado": st.column_config.SelectboxColumn("Estado", options=["🔴 Activo", "✅ Mitigado"], required=True)
+            "Estado": st.column_config.SelectboxColumn("Estado", options=["🔴 Activo", "✅ Mitigado Manual", "✅ Auto-Mitigado"], required=True)
         }
     )
 
