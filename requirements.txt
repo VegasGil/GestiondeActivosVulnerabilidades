@@ -3,3 +3,4 @@ duckdb
 streamlit
 python-dotenv
 pyarrow
+plotly

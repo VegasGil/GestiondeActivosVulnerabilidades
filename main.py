@@ -5,339 +5,619 @@ import subprocess
 import glob
 import os
 from datetime import datetime
+import plotly.express as px
 
-# 1. Configuración de la página
-st.set_page_config(page_title="Gestión de Activos y Vulnerabilidades", page_icon="🛡️", layout="wide")
+# 1. Page Configuration
+st.set_page_config(page_title="Cloud Posture & Vulnerability Dashboard", layout="wide")
 
-# Inicialización segura de estado (Para evitar el AttributeError cuando no hay datos)
-if 'vista_actual' not in st.session_state:
-    st.session_state.vista_actual = "GLOBAL"
+# Safe state initialization
+if 'current_view' not in st.session_state:
+    st.session_state.current_view = "GLOBAL"
+if 'screen_mode' not in st.session_state:
+    st.session_state.screen_mode = "Executive Dashboard"
 
-# 2. Diseño Moderno (CSS - Purple Team)
+# 2. Ultra-Dark Enterprise Design
 st.markdown("""
     <style>
-        .main { background-color: #0e1117; }
+        .main { background-color: #12141A; }
         .stButton>button { 
-            width: 100%; border-radius: 6px; background-color: #5E35B1; color: white; border: none; 
-            font-weight: bold; margin-bottom: 5px; min-height: 60px; white-space: normal; 
-            display: flex; align-items: center; justify-content: center; transition: 0.3s;
+            width: 100%; border-radius: 4px; background-color: #2D313A; color: #E0E0E0; border: 1px solid #424651; 
+            font-weight: 500; margin-bottom: 5px; min-height: 45px; transition: 0.2s;
         }
-        .stButton>button:hover { background-color: #4527A0; border: 1px solid #B39DDB; box-shadow: 0 0 10px #7E57C2; }
-        .btn-global>button { background-color: #311B92 !important; border: 1px solid #7E57C2 !important; text-transform: uppercase; letter-spacing: 1px;}
-        .btn-global>button:hover { background-color: #4527A0 !important; box-shadow: 0 0 15px #B39DDB !important;}
-        .stDownloadButton>button { min-height: 45px; background-color: #4CAF50; width: 100%;}
-        .stDownloadButton>button:hover { background-color: #388E3C; border: 1px solid #81C784; }
-        
-        .metric-card { 
-            background-color: #1e1e1e; padding: 15px; border-radius: 8px; border-left: 5px solid #5E35B1; 
-            text-align: center; margin-bottom: 20px; height: 120px; display: flex; flex-direction: column; 
-            justify-content: center; align-items: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        .stButton>button:hover { background-color: #3F4452; border-color: #5C6270; color: white;}
+        .btn-nav>button { background-color: #1E3A8A !important; border: 1px solid #2563EB !important; color: white; font-size: 1.05rem;}
+        .btn-nav>button:hover { background-color: #2563EB !important; box-shadow: 0 0 15px #3B82F6 !important;}
+        .cs-card {
+            background-color: #1F2128; padding: 15px 20px; border-radius: 4px; margin-bottom: 15px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3); border: 1px solid #2D313A; height: 110px;
         }
-        .metric-card h3 { margin: 0; font-size: 1rem; color: #BDBDBD; padding-bottom: 5px;}
-        .metric-card h2 { margin: 0; font-size: 2rem; color: #FFFFFF; font-weight: bold;}
-        .metric-card h4 { margin: 0; font-size: 1.1rem; color: #FFFFFF; word-break: break-word;}
-        
-        .kpi-critico { border-left: 5px solid #FF1744 !important; }
-        .kpi-mitigado { border-left: 5px solid #00C853 !important; }
-        .kpi-activo { border-left: 5px solid #FF9100 !important; }
-        .kpi-top { border-left: 5px solid #E91E63 !important; height: 100px !important; }
-        .kpi-falso-seguro { border-left: 5px solid #FFC107 !important; }
+        .cs-card-title { font-size: 0.90rem; color: #9CA3AF; margin-bottom: 2px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;}
+        .cs-card-value { font-size: 2.6rem; color: #F9FAFB; font-weight: 400; line-height: 1.1; margin-bottom: 5px;}
+        .cs-card-footer { font-size: 0.70rem; color: #6B7280; }
+        .border-crit { border-bottom: 4px solid #E53935; }
+        .border-high { border-bottom: 4px solid #F57C00; }
+        .border-med  { border-bottom: 4px solid #FFB300; }
+        .border-cve  { border-bottom: 4px solid #8B5CF6; }
+        .border-ok   { border-bottom: 4px solid #10B981; }
+        .border-info { border-bottom: 4px solid #2563EB; }
+        [data-testid="stVerticalBlockBorderWrapper"] > div {
+            background-color: #1F2128 !important; border-color: #2D313A !important; border-radius: 6px !important; padding: 1rem !important;
+        }
+        .grid-title { font-size: 1.05rem; color: #E5E7EB; margin-bottom: 15px; font-weight: 600;}
+        .empty-state { color: #6B7280; text-align: center; padding: 30px 0; font-style: italic; font-size: 0.9rem;}
+        h1, h2, h3, h4, h5, h6 { color: #F3F4F6 !important; }
+        hr { border-color: #2D313A; }
+        .filter-panel { background-color: #1F2128; padding: 20px; border-radius: 4px; border: 1px solid #374151; margin-bottom: 20px;}
+        [data-testid="stDataFrame"] { background-color: transparent !important;}
+        .streamlit-expanderHeader { color: #9CA3AF !important; font-size: 0.85rem !important; }
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🛡️ Gestión de Activos y Vulnerabilidades")
-st.markdown("---")
-
-# 3. FUNCIONES INTELIGENTES DE LECTURA (Solo los más recientes)
-def obtener_archivos_mas_recientes():
-    archivos = glob.glob('historico_csv/**/*.csv', recursive=True)
-    if not archivos: return []
+# 3. DATA PROCESSING & STANDARDIZATION FUNCTIONS
+def standardize_columns(df):
+    if df.empty: return df
     
-    archivos_por_tipo = {}
-    for f in archivos:
-        nombre_archivo = os.path.basename(f)
-        partes = nombre_archivo.split('_')
-        nombre_base = '_'.join(partes[:-1]) if len(partes) > 1 and partes[-1].replace('.csv', '').isdigit() else nombre_archivo.replace('.csv', '')
+    df = df.loc[:, ~df.columns.duplicated()].copy()
+    col_mapping = {}
+    assigned_targets = set()
+    
+    for col in df.columns:
+        col_lower = str(col).lower().strip().replace(' ', '').replace('_', '')
+        target = None
         
-        tiempo_mod = os.path.getmtime(f)
-        if nombre_base not in archivos_por_tipo or tiempo_mod > archivos_por_tipo[nombre_base]['tiempo']:
-            archivos_por_tipo[nombre_base] = {'ruta': f, 'tiempo': tiempo_mod, 'nombre_base': nombre_base}
+        if col_lower in ['devicename', 'nombreequipo', 'hostname', 'equipo', 'dispositivo', 'name', 'device', 'host', 'computername']:
+            target = 'DeviceName'
+        elif 'compliance' in col_lower or 'cumplimiento' in col_lower:
+            target = 'Compliance'
+        elif 'sistemaoperativo' in col_lower or col_lower in ['os', 'operatingsystem']:
+            target = 'OperatingSystem'
+        elif col_lower in ['estado', 'status']:
+            target = 'Status'
+        elif col_lower in ['areainfraestructura', 'environment', 'provider']:
+            target = 'Environment'
+        elif col_lower in ['componentenoconforme', 'vulnerablesoftware', 'software']:
+            target = 'VulnerableSoftware'
+        elif col_lower in ['vulnerabilityseveritylevel', 'severity']:
+            target = 'Severity'
             
-    return list(archivos_por_tipo.values())
+        if target and target not in assigned_targets and target != col:
+            col_mapping[col] = target
+            assigned_targets.add(target)
+        elif target == col:
+            assigned_targets.add(target)
+            
+    df.rename(columns=col_mapping, inplace=True)
+    df = df.loc[:, ~df.columns.duplicated()].copy()
+    
+    if 'DeviceName' in df.columns:
+        df['DeviceName'] = df['DeviceName'].fillna('Unknown')
+        df['DeviceName'] = df['DeviceName'].astype(str).str.lower().str.strip()
+        df['DeviceName'] = df['DeviceName'].apply(lambda x: x.split('.')[0] if '.' in x else x)
+        
+    if 'Status' in df.columns:
+        status_map = {
+            '🔴 Activo': '🔴 Active', '✅ Mitigado Manual': '✅ Manual Mitigation', '✅ Auto-Mitigado': '✅ Auto-Mitigated', 
+            'Activo': '🔴 Active', 'Active': '🔴 Active', '🔴 Active': '🔴 Active',
+            'Manual Mitigation': '✅ Manual Mitigation', 'Auto-Mitigated': '✅ Auto-Mitigated'
+        }
+        df['Status'] = df['Status'].replace(status_map)
+        
+    return df
 
-def cargar_tabla_especifica(ruta_archivo):
+def update_trend_history(df_master):
+    if df_master.empty or 'Status' not in df_master.columns: return
+    os.makedirs('datos_correlacionados', exist_ok=True)
+    trend_file = 'datos_correlacionados/trend_history.csv'
+    
+    active_count = len(df_master[df_master['Status'] == '🔴 Active'])
+    mitigated_count = len(df_master[df_master['Status'].astype(str).str.contains('Mitigat', case=False, na=False)])
+    
+    new_row = pd.DataFrame({'Date': [datetime.now().strftime('%Y-%m-%d %H:%M')], 'Active': [active_count], 'Mitigated': [mitigated_count]})
+    
+    if os.path.exists(trend_file):
+        history_df = pd.read_csv(trend_file)
+        history_df = pd.concat([history_df, new_row], ignore_index=True)
+    else:
+        history_df = new_row
+        
+    history_df.drop_duplicates(subset=['Date'], keep='last').to_csv(trend_file, index=False)
+
+def get_recent_files():
+    files = glob.glob('historico_csv/**/*.csv', recursive=True)
+    if not files: return []
+    files_by_type = {}
+    for f in files:
+        base_name = os.path.basename(f)
+        parts = base_name.split('_')
+        name_only = '_'.join(parts[:-1]) if len(parts) > 1 and parts[-1].replace('.csv', '').isdigit() else base_name.replace('.csv', '')
+        mod_time = os.path.getmtime(f)
+        if name_only not in files_by_type or mod_time > files_by_type[name_only]['time']:
+            files_by_type[name_only] = {'path': f, 'time': mod_time, 'base_name': name_only}
+    return list(files_by_type.values())
+
+def load_specific_table(file_path):
     try:
         con = duckdb.connect(':memory:')
-        query = f"SELECT DISTINCT * FROM read_csv_auto('{ruta_archivo}', ignore_errors=True)"
+        query = f"SELECT DISTINCT * FROM read_csv_auto('{file_path}', ignore_errors=True)"
         return con.execute(query).df().drop_duplicates()
     except Exception:
         return pd.DataFrame()
 
-def actualizar_base_maestra():
-    archivos_recientes = obtener_archivos_mas_recientes()
-    if not archivos_recientes: return
+def process_master_database():
+    recent_files = get_recent_files()
+    if not recent_files: return
 
-    dfs_to_merge = []
-    
-    for info in archivos_recientes:
-        df = cargar_tabla_especifica(info['ruta'])
+    dfs_to_concat = []
+    for info in recent_files:
+        df = load_specific_table(info['path'])
+        df = standardize_columns(df)
         if not df.empty:
-            col_mapping = {col: 'DeviceName' for col in df.columns if str(col).lower().replace(' ', '').replace('_', '') in ['devicename', 'nombreequipo', 'hostname', 'equipo', 'dispositivo']}
-            df.rename(columns=col_mapping, inplace=True)
+            if 'Environment' not in df.columns:
+                df['Environment'] = info['base_name']
+            dfs_to_concat.append(df)
+
+    if not dfs_to_concat: return
+    
+    df_all = pd.concat(dfs_to_concat, ignore_index=True)
+    
+    enrichment_cols = ['Compliance', 'OperatingSystem', 'Environment']
+    for col in enrichment_cols:
+        if col in df_all.columns:
+            mapping = df_all.dropna(subset=[col]).drop_duplicates(subset=['DeviceName'], keep='last').set_index('DeviceName')[col]
+            df_all[col] = df_all['DeviceName'].map(mapping)
             
-            if 'AreaInfraestructura' not in df.columns:
-                df['AreaInfraestructura'] = info['nombre_base']
-            else:
-                df['AreaInfraestructura'] = df['AreaInfraestructura'].fillna(info['nombre_base'])
-                
-            dfs_to_merge.append(df)
+    if 'CveId' in df_all.columns or 'VulnerableSoftware' in df_all.columns:
+        cols_to_check = [c for c in ['CveId', 'VulnerableSoftware'] if c in df_all.columns]
+        df_all = df_all.dropna(subset=cols_to_check, how='all')
 
-    if not dfs_to_merge: return
+    df_today = df_all.drop_duplicates()
+    df_today = standardize_columns(df_today)
     
-    df_hoy = dfs_to_merge[0]
-    for i in range(1, len(dfs_to_merge)):
-        if 'DeviceName' in df_hoy.columns and 'DeviceName' in dfs_to_merge[i].columns:
-            df_hoy = pd.merge(df_hoy, dfs_to_merge[i], on='DeviceName', how='outer', suffixes=('', '_dup'))
-            for col in list(df_hoy.columns):
-                if col.endswith('_dup'):
-                    orig_col = col.replace('_dup', '')
-                    df_hoy[orig_col] = df_hoy[orig_col].combine_first(df_hoy[col])
-                    df_hoy.drop(columns=[col], inplace=True)
-        else:
-            df_hoy = pd.concat([df_hoy, dfs_to_merge[i]], ignore_index=True)
-
-    columnas_deseadas = ['DeviceName', 'compliance', 'AreaInfraestructura', 'sistemaOperativo', 'ComponenteNoConforme', 'SoftwareVersion', 'CveId', 'VulnerabilitySeverityLevel', 'RecommendedSecurityUpdate']
-    df_hoy = df_hoy[[col for col in columnas_deseadas if col in df_hoy.columns]].drop_duplicates()
-    
-    df_hoy['Key'] = df_hoy['DeviceName'].astype(str) + "-" + df_hoy.get('CveId', pd.Series(['']*len(df_hoy))).astype(str)
+    df_today['Key'] = df_today['DeviceName'].astype(str) + "-" + df_today.get('CveId', pd.Series(['']*len(df_today))).astype(str) + "-" + df_today.get('VulnerableSoftware', pd.Series(['']*len(df_today))).astype(str)
 
     os.makedirs('datos_correlacionados', exist_ok=True)
-    ruta_maestra = 'datos_correlacionados/base_global_maestra.csv'
+    master_path = 'datos_correlacionados/base_global_maestra.csv'
     
-    if os.path.exists(ruta_maestra):
-        df_maestra = pd.read_csv(ruta_maestra)
+    if os.path.exists(master_path):
+        df_master = pd.read_csv(master_path)
+        df_master = standardize_columns(df_master)
         
-        if 'Key' not in df_maestra.columns:
-            df_maestra['Key'] = df_maestra.get('DeviceName', '').astype(str) + "-" + df_maestra.get('CveId', '').astype(str)
+        if 'Key' not in df_master.columns:
+            df_master['Key'] = df_master['DeviceName'].astype(str) + "-" + df_master.get('CveId', pd.Series(['']*len(df_master))).astype(str) + "-" + df_master.get('VulnerableSoftware', pd.Series(['']*len(df_master))).astype(str)
+        
+        df_master = df_master.drop_duplicates(subset=['Key'])
+        
+        if 'Status' in df_master.columns:
+            status_memory = df_master.set_index('Key')['Status'].to_dict()
+            df_today['Status'] = df_today['Key'].map(status_memory).fillna('🔴 Active')
+        else:
+            df_today['Status'] = '🔴 Active'
             
-        keys_hoy = set(df_hoy['Key'])
-        keys_viejas = set(df_maestra['Key'])
+        keys_today = set(df_today['Key'])
+        keys_old = set(df_master['Key'])
+        keys_missing = keys_old - keys_today
         
-        keys_ausentes = keys_viejas - keys_hoy
-        df_ausentes = df_maestra[df_maestra['Key'].isin(keys_ausentes)].copy()
-        df_ausentes['Estado'] = '✅ Auto-Mitigado'
+        df_missing = df_master[df_master['Key'].isin(keys_missing)].copy()
+        df_missing['Status'] = '✅ Auto-Mitigated'
         
-        df_hoy['Estado'] = '🔴 Activo'
-        
-        df_nueva = pd.concat([df_hoy, df_ausentes], ignore_index=True)
+        df_new = pd.concat([df_today, df_missing], ignore_index=True)
     else:
-        df_hoy['Estado'] = '🔴 Activo'
-        df_nueva = df_hoy
+        df_today['Status'] = '🔴 Active'
+        df_new = df_today
 
-    # Limpiamos la columna Key para no ensuciar la data al guardar
-    if 'Key' in df_nueva.columns:
-        df_nueva.drop(columns=['Key'], inplace=True)
+    df_new = df_new.drop_duplicates(subset=['Key']) 
+    df_new.to_csv(master_path, index=False)
+    update_trend_history(df_new)
 
-    df_nueva.to_csv(ruta_maestra, index=False)
+@st.cache_data(ttl=300)
+def fetch_cached_data(view_name):
+    if view_name == "GLOBAL":
+        path = 'datos_correlacionados/base_global_maestra.csv'
+        df = pd.read_csv(path) if os.path.exists(path) else pd.DataFrame()
+    else:
+        files_info = get_recent_files()
+        spec_path = next((info['path'] for info in files_info if info['base_name'] == view_name), None)
+        df = load_specific_table(spec_path) if spec_path else pd.DataFrame()
+        
+    if not df.empty:
+        df = standardize_columns(df)
+        if 'Status' not in df.columns: df.insert(0, 'Status', '🔴 Active')
+        
+        if 'Key' not in df.columns:
+            df['Key'] = df['DeviceName'].astype(str) + "-" + df.get('CveId', pd.Series(['']*len(df))).astype(str) + "-" + df.get('VulnerableSoftware', pd.Series(['']*len(df))).astype(str)
+            
+    return df
 
-# ================= MENU LATERAL =================
-st.sidebar.header("⚙️ Administración")
-
-if st.sidebar.button("🔄 Procesar Nuevos CSVs"):
-    with st.spinner("Comparando realidad actual vs historial..."):
+# ================= SIDEBAR MENU =================
+st.sidebar.header("Operations")
+if st.sidebar.button("Refresh Data (ETL)"):
+    with st.spinner("Building Correlated Master Database..."):
         try:
             subprocess.run(["python", "src/data/data_processor.py"], capture_output=True, text=True)
-            actualizar_base_maestra()
-            st.sidebar.success("¡Base Maestra sincronizada con la realidad!")
-            st.cache_data.clear()
+            process_master_database()
+            st.cache_data.clear() 
+            st.sidebar.success("Correlation and Synchronization successful!")
             st.rerun()
         except Exception as e:
-            st.sidebar.error("Error al procesar.")
+            st.sidebar.error(f"Error processing data: {e}")
 
 st.sidebar.markdown("---")
-st.sidebar.header("🌐 Análisis Principal")
-
-st.markdown('<div class="btn-global">', unsafe_allow_html=True)
-if st.sidebar.button("🌟 Vista Global Correlacionada"):
-    st.session_state.vista_actual = "GLOBAL"
+st.sidebar.header("Navigation")
+st.markdown('<div class="btn-nav">', unsafe_allow_html=True)
+if st.sidebar.button("Executive Dashboard"): st.session_state.screen_mode = "Executive Dashboard"
+if st.sidebar.button("Search & Mitigation"): st.session_state.screen_mode = "Search & Mitigation"
+if st.sidebar.button("Patch Management"): st.session_state.screen_mode = "Patch Management"
 st.markdown('</div>', unsafe_allow_html=True)
 
 st.sidebar.markdown("---")
-st.sidebar.header("📁 Vistas Individuales (Último CSV)")
+st.sidebar.header("Data Source")
+available_files = get_recent_files()
+file_names = [info['base_name'] for info in available_files]
 
-archivos_recientes_info = obtener_archivos_mas_recientes()
-tipos_disponibles = [info['nombre_base'] for info in archivos_recientes_info]
-
-if not tipos_disponibles:
-    st.warning("No hay datos en la carpeta 'historico_csv'. Coloca tus archivos en 'datos_diarios' y procesa.")
+if not file_names:
+    st.sidebar.warning("No historical data available.")
 else:
-    for tipo in tipos_disponibles:
-        if st.sidebar.button(f"📄 {tipo}"):
-            st.session_state.vista_actual = tipo
+    source_options = ["Global Correlated View"] + [t.replace('_', ' ').title() for t in file_names]
+    selected_source = st.sidebar.selectbox("Select data view:", source_options, label_visibility="collapsed")
+    st.session_state.current_view = "GLOBAL" if selected_source == "Global Correlated View" else file_names[source_options.index(selected_source) - 1]
 
-# ================= PANTALLA PRINCIPAL =================
-if st.session_state.vista_actual == "GLOBAL":
-    titulo_vista = "Vista Global Correlacionada (Sincronizada)"
-    ruta_maestra = 'datos_correlacionados/base_global_maestra.csv'
-    if os.path.exists(ruta_maestra):
-        df_actual = pd.read_csv(ruta_maestra)
+df_actual = fetch_cached_data(st.session_state.current_view)
+
+# =====================================================================
+# PAGE 1: EXECUTIVE DASHBOARD
+# =====================================================================
+if st.session_state.screen_mode == "Executive Dashboard":
+    st.title("Cloud Posture & Vulnerability Dashboard")
+    
+    if df_actual.empty:
+        st.info("Master database is empty or not found. Process new CSVs to begin.")
     else:
-        st.info("La Base Maestra aún no existe. Sube archivos CSV y presiona 'Procesar Nuevos CSVs'.")
-        df_actual = pd.DataFrame()
-else:
-    ruta_especifica = next((info['ruta'] for info in archivos_recientes_info if info['nombre_base'] == st.session_state.vista_actual), None)
-    df_actual = cargar_tabla_especifica(ruta_especifica) if ruta_especifica else pd.DataFrame()
-    if 'Estado' not in df_actual.columns and not df_actual.empty:
-        df_actual.insert(0, 'Estado', '🔴 Activo')
-    titulo_vista = f"Reporte Individual (Más reciente): {st.session_state.vista_actual}"
-
-if not df_actual.empty:
-    df_filtrado = df_actual.copy()
-    
-    st.subheader(f"📊 {titulo_vista}")
-
-    # --- SECCIÓN DE FILTROS ---
-    st.markdown("#### 🎛️ Panel de Filtros y Búsqueda")
-    
-    busqueda_global = st.text_input("🔎 Buscador Global Rápido (CVE, Software, Equipo):")
-    if busqueda_global:
-        mascara_busqueda = pd.Series(False, index=df_filtrado.index)
-        for col in df_filtrado.columns:
-            mascara_busqueda = mascara_busqueda | df_filtrado[col].astype(str).str.contains(busqueda_global, case=False, na=False)
-        df_filtrado = df_filtrado[mascara_busqueda]
-    
-    col_filtro1, col_filtro2 = st.columns(2)
-    with col_filtro1:
-        if 'Estado' in df_filtrado.columns:
-            filtro_estado = st.radio("🛡️ Estado de Vulnerabilidad:", ["Mostrar Todos", "🔴 Solo Activas", "✅ Solo Mitigadas"], horizontal=True)
-            if filtro_estado == "🔴 Solo Activas":
-                df_filtrado = df_filtrado[df_filtrado['Estado'] == '🔴 Activo']
-            elif filtro_estado == "✅ Solo Mitigadas":
-                df_filtrado = df_filtrado[df_filtrado['Estado'].astype(str).str.contains('Mitigado', case=False, na=False)]
-
-    with col_filtro2:
-        sev_col = 'VulnerabilitySeverityLevel' if 'VulnerabilitySeverityLevel' in df_filtrado.columns else ('Severity' if 'Severity' in df_filtrado.columns else None)
-        if sev_col:
-            filtro_sev = st.radio("🚦 Nivel de Severidad:", ["Mostrar Todas", "🚨 Solo Críticas", "🟠 Solo Altas"], horizontal=True)
-            if filtro_sev == "🚨 Solo Críticas":
-                df_filtrado = df_filtrado[df_filtrado[sev_col].astype(str).str.contains('Critical', case=False, na=False)]
-            elif filtro_sev == "🟠 Solo Altas":
-                df_filtrado = df_filtrado[df_filtrado[sev_col].astype(str).str.contains('High', case=False, na=False)]
-
-    if 'AreaInfraestructura' in df_filtrado.columns:
-        opciones_area = ["Todas las Categorías"] + [str(x) for x in df_actual['AreaInfraestructura'].dropna().unique()]
-        filtro_area = st.radio("🏢 Categoría de Equipo:", opciones_area, horizontal=True)
-        if filtro_area != "Todas las Categorías":
-            df_filtrado = df_filtrado[df_filtrado['AreaInfraestructura'].astype(str) == filtro_area]
-
-    col_filtro3, col_filtro4 = st.columns(2)
-    with col_filtro3:
-        if 'ComponenteNoConforme' in df_filtrado.columns:
-            opciones_comp = [str(x) for x in df_filtrado['ComponenteNoConforme'].dropna().unique()]
-            filtro_comp = st.multiselect("⚙️ Filtrar por Componente (Software):", opciones_comp, placeholder="Selecciona componentes...")
-            if filtro_comp:
-                df_filtrado = df_filtrado[df_filtrado['ComponenteNoConforme'].astype(str).isin(filtro_comp)]
-                
-    with col_filtro4:
-        if 'sistemaOperativo' in df_filtrado.columns:
-            opciones_os = [str(x) for x in df_filtrado['sistemaOperativo'].dropna().unique()]
-            filtro_os = st.multiselect("🖥️ Filtrar por Sistema Operativo:", opciones_os, placeholder="Selecciona SO...")
-            if filtro_os:
-                df_filtrado = df_filtrado[df_filtrado['sistemaOperativo'].astype(str).isin(filtro_os)]
-
-    # --- CÁLCULO DE KPIs PRINCIPALES ---
-    activos_afectados = df_filtrado['DeviceName'].nunique() if 'DeviceName' in df_filtrado.columns else len(df_filtrado)
-    total_mitigados = len(df_filtrado[df_filtrado['Estado'].astype(str).str.contains('Mitigado', case=False, na=False)]) if 'Estado' in df_filtrado.columns else 0
-    total_activos = len(df_filtrado[df_filtrado['Estado'] == '🔴 Activo']) if 'Estado' in df_filtrado.columns else 0
-    
-    criticas_activas = 0
-    if sev_col and 'Estado' in df_filtrado.columns:
-        criticas_activas = len(df_filtrado[(df_filtrado[sev_col].astype(str).str.contains('Critical', case=False, na=False)) & (df_filtrado['Estado'] == '🔴 Activo')])
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.markdown(f'<div class="metric-card"><h3 title="Equipos físicos/virtuales únicos en esta vista">Equipos Afectados</h3><h2>{activos_afectados}</h2></div>', unsafe_allow_html=True)
-    with col2:
-        st.markdown(f'<div class="metric-card kpi-activo"><h3>Vulnerabilidades Activas</h3><h2>{total_activos}</h2></div>', unsafe_allow_html=True)
-    with col3:
-        st.markdown(f'<div class="metric-card kpi-mitigado"><h3>Vulnerabilidades Mitigadas</h3><h2>{total_mitigados}</h2></div>', unsafe_allow_html=True)
-    with col4:
-        st.markdown(f'<div class="metric-card kpi-critico"><h3>Críticas SIN Mitigar</h3><h2>{criticas_activas}</h2></div>', unsafe_allow_html=True)
-
-    # --- KPIs DE CUMPLIMIENTO ---
-    if 'compliance' in df_filtrado.columns:
-        st.markdown("#### 🛡️ Brecha de Cumplimiento (Falsa Sensación de Seguridad)")
-        equipos_compliant_vuln = df_filtrado[df_filtrado['compliance'].astype(str).str.contains('Compliant|Cumple', case=False, na=False)]['DeviceName'].nunique()
-        equipos_non_compliant = df_filtrado[df_filtrado['compliance'].astype(str).str.contains('Non|No Cumple|Not', case=False, na=False)]['DeviceName'].nunique()
+        df_dash = df_actual.copy()
+        sev_col = 'Severity' if 'Severity' in df_dash.columns else None
+        df_active = df_dash[df_dash['Status'] == '🔴 Active'].copy()
         
-        c_col1, c_col2, c_col3 = st.columns(3)
-        with c_col1:
-            st.markdown(f'<div class="metric-card"><h3 title="Total de equipos únicos en la vista actual">Total Equipos Vulnerables</h3><h2>{activos_afectados}</h2></div>', unsafe_allow_html=True)
-        with c_col2:
-            st.markdown(f'<div class="metric-card kpi-falso-seguro"><h3 title="Intune los marca conformes, pero tienen componentes vulnerables">"Compliant" PERO Vulnerables</h3><h2>{equipos_compliant_vuln}</h2></div>', unsafe_allow_html=True)
-        with c_col3:
-            st.markdown(f'<div class="metric-card kpi-critico"><h3 title="Equipos marcados como No Conformes en Intune">Equipos Non-Compliant</h3><h2>{equipos_non_compliant}</h2></div>', unsafe_allow_html=True)
+        hora_actual = datetime.now().strftime('%H:%M:%S')
+        total_equipos = df_dash['DeviceName'].nunique() if 'DeviceName' in df_dash.columns else 0
+        criticas = len(df_active[df_active[sev_col].astype(str).str.contains('Critical', case=False, na=False)]) if sev_col else 0
+        altas = len(df_active[df_active[sev_col].astype(str).str.contains('High', case=False, na=False)]) if sev_col else 0
+        medias = len(df_active[df_active[sev_col].astype(str).str.contains('Medium|Mod', case=False, na=False)]) if sev_col else 0
+        total_cves = df_active['CveId'].nunique() if 'CveId' in df_active.columns else 0
 
-    # --- KPIs DE TOP 3 COMPONENTES ---
-    if 'ComponenteNoConforme' in df_filtrado.columns and not df_filtrado.empty:
-        st.markdown("#### 🔥 Top 3 Componentes Vulnerables (Para Parcheo Prioritario)")
-        top_comps = df_filtrado['ComponenteNoConforme'].value_counts().head(3)
-        
-        if not top_comps.empty:
-            cols_top = st.columns(3)
-            for i, (comp, count) in enumerate(top_comps.items()):
-                with cols_top[i]:
-                    st.markdown(f'<div class="metric-card kpi-top">'
-                                f'<h3 style="font-size: 1rem; color: #E91E63;">#{i+1} | {comp}</h3>'
-                                f'<h2 style="font-size: 1.8rem;">{count} <span style="font-size: 1rem; color: #BDBDBD; font-weight: normal;">alertas</span></h2>'
-                                f'</div>', unsafe_allow_html=True)
+        col1, col2, col3, col4, col5 = st.columns(5)
+        with col1: st.markdown(f'<div class="cs-card border-crit"><div class="cs-card-title">Critical IOMs</div><div class="cs-card-value">{criticas}</div><div class="cs-card-footer">Last refreshed: {hora_actual}</div></div>', unsafe_allow_html=True)
+        with col2: st.markdown(f'<div class="cs-card border-high"><div class="cs-card-title">High IOMs</div><div class="cs-card-value">{altas}</div><div class="cs-card-footer">Last refreshed: {hora_actual}</div></div>', unsafe_allow_html=True)
+        with col3: st.markdown(f'<div class="cs-card border-med"><div class="cs-card-title">Medium IOMs</div><div class="cs-card-value">{medias}</div><div class="cs-card-footer">Last refreshed: {hora_actual}</div></div>', unsafe_allow_html=True)
+        with col4: st.markdown(f'<div class="cs-card border-cve"><div class="cs-card-title">Total Active CVEs</div><div class="cs-card-value">{total_cves}</div><div class="cs-card-footer">Unique vulnerabilities</div></div>', unsafe_allow_html=True)
+        with col5: st.markdown(f'<div class="cs-card border-info"><div class="cs-card-title">Impacted Assets</div><div class="cs-card-value">{total_equipos}</div><div class="cs-card-footer">Unique Devices</div></div>', unsafe_allow_html=True)
 
-    # --- PREPARAR TABLA PARA MOSTRAR (Ocultar Key y ordenar Estado) ---
-    if 'Key' in df_filtrado.columns:
-        df_filtrado = df_filtrado.drop(columns=['Key'])
-        
-    if 'Estado' in df_filtrado.columns:
-        # Forzar a que la columna 'Estado' sea siempre la primera
-        cols = ['Estado'] + [col for col in df_filtrado.columns if col != 'Estado']
-        df_filtrado = df_filtrado[cols]
-
-    # --- TABLA EDITABLE ---
-    st.markdown("*(Cambia el estado haciendo doble clic en la columna **Estado**)*")
-    df_editado = st.data_editor(
-        df_filtrado,
-        use_container_width=True,
-        num_rows="dynamic",
-        key=f"editor_{st.session_state.vista_actual}",
-        column_config={
-            "Estado": st.column_config.SelectboxColumn("Estado", options=["🔴 Activo", "✅ Mitigado Manual", "✅ Auto-Mitigado"], required=True)
-        }
-    )
-
-    # --- GUARDAR MITIGACIONES ---
-    st.markdown("---")
-    col_btn1, col_btn2, col_btn3 = st.columns([2, 2, 4])
-    
-    with col_btn1:
-        if st.button("💾 Guardar Mitigaciones"):
-            try:
-                if st.session_state.vista_actual == "GLOBAL":
-                    df_maestro = pd.read_csv('datos_correlacionados/base_global_maestra.csv')
-                    df_maestro.loc[df_editado.index, 'Estado'] = df_editado['Estado']
-                    df_maestro.to_csv('datos_correlacionados/base_global_maestra.csv', index=False)
-                    st.success("¡Base Maestra Actualizada Exitosamente!")
+        col_c1, col_c2 = st.columns([7, 3])
+        with col_c1:
+            with st.container(border=True):
+                st.markdown('<div class="grid-title">Top Services with Vulnerabilities (Count by Severity)</div>', unsafe_allow_html=True)
+                if 'VulnerableSoftware' in df_active.columns and sev_col and not df_active['VulnerableSoftware'].dropna().empty:
+                    df_active['VulnerableSoftware'] = df_active['VulnerableSoftware'].fillna('Unknown')
+                    df_active[sev_col] = df_active[sev_col].fillna('Unrated')
+                    df_bar = df_active.groupby(['VulnerableSoftware', sev_col]).size().reset_index(name='Count')
+                    top_comps = df_active['VulnerableSoftware'].value_counts().head(12).index
+                    df_bar = df_bar[df_bar['VulnerableSoftware'].isin(top_comps)]
+                    fig_bar = px.bar(df_bar, x='VulnerableSoftware', y='Count', color=sev_col, color_discrete_map={'Critical':'#E53935', 'High':'#F57C00', 'Medium':'#FFB300', 'Low':'#03A9F4', 'Unrated': '#9E9E9E'}, barmode='stack', template="plotly_dark")
+                    fig_bar.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='#B0B3BC', size=11), xaxis_title="", yaxis_title="Findings", legend_title="Severity", margin=dict(t=10, b=0, l=0, r=0))
+                    st.plotly_chart(fig_bar, use_container_width=True)
                 else:
-                    os.makedirs('datos_editados/individuales', exist_ok=True)
-                    df_editado.to_csv(f"datos_editados/individuales/{st.session_state.vista_actual}_estado.csv", index=False)
-                    st.success("Guardado en vistas individuales.")
-            except Exception as e:
-                st.error(f"⚠️ Error al guardar: {e}")
-                
-    with col_btn2:
-        csv_export = df_editado.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="📥 Descargar Tabla Actual",
-            data=csv_export,
-            file_name=f"Reporte_{st.session_state.vista_actual}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-            mime="text/csv"
+                    st.markdown('<div class="empty-state">No Component data available in this view.</div>', unsafe_allow_html=True)
+            
+        with col_c2:
+            with st.container(border=True):
+                st.markdown('<div class="grid-title">Top 10 Active CVEs</div>', unsafe_allow_html=True)
+                if 'CveId' in df_active.columns and not df_active['CveId'].dropna().empty:
+                    df_cve = df_active['CveId'].fillna('No CVE assigned').value_counts().head(10).reset_index()
+                    df_cve.columns = ['CVE', 'Count']
+                    fig_cve = px.pie(df_cve, names='CVE', values='Count', hole=0.6, template="plotly_dark", color_discrete_sequence=px.colors.qualitative.Pastel)
+                    fig_cve.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='#B0B3BC'), margin=dict(t=10, b=10, l=10, r=10), showlegend=True, legend=dict(orientation='h', yanchor='top', y=-0.05, xanchor='center', x=0.5, font=dict(size=10)))
+                    fig_cve.update_traces(textposition='inside', textinfo='percent', insidetextorientation='radial')
+                    st.plotly_chart(fig_cve, use_container_width=True)
+                    
+                    with st.expander("📋 View & Copy Data"):
+                        st.dataframe(df_cve, hide_index=True, use_container_width=True)
+                else: 
+                    st.markdown('<div class="empty-state">No CVE data available in this view.</div>', unsafe_allow_html=True)
+
+        col_t1, col_t2 = st.columns(2)
+        with col_t1:
+            with st.container(border=True):
+                st.markdown('<div class="grid-title">Top 10 Most Vulnerable Devices</div>', unsafe_allow_html=True)
+                if 'DeviceName' in df_active.columns and sev_col:
+                    top_dev = df_active.groupby(['DeviceName', sev_col]).size().unstack(fill_value=0)
+                    if 'Critical' in top_dev.columns: top_dev['SortScore'] = top_dev['Critical'] * 10
+                    else: top_dev['SortScore'] = 0
+                    if 'High' in top_dev.columns: top_dev['SortScore'] += top_dev['High']
+                    top_dev = top_dev.sort_values('SortScore', ascending=False).head(10).drop(columns=['SortScore'], errors='ignore').reset_index()
+                    st.dataframe(top_dev, use_container_width=True, hide_index=True)
+                else:
+                    st.markdown('<div class="empty-state">No Device data available in this view.</div>', unsafe_allow_html=True)
+
+        with col_t2:
+            with st.container(border=True):
+                st.markdown('<div class="grid-title">Configuration Assessments by Provider</div>', unsafe_allow_html=True)
+                if 'Environment' in df_active.columns and not df_active['Environment'].dropna().empty:
+                    top_area = df_active['Environment'].value_counts().reset_index()
+                    top_area.columns = ['Cloud Provider / Environment', 'Findings']
+                    st.dataframe(top_area, use_container_width=True, hide_index=True)
+                else:
+                    st.markdown('<div class="empty-state">No Environment data available in this view.</div>', unsafe_allow_html=True)
+
+        col_d1, col_d2, col_d3 = st.columns(3)
+        with col_d1:
+            with st.container(border=True):
+                st.markdown('<div class="grid-title">Findings by Severity</div>', unsafe_allow_html=True)
+                if sev_col and sev_col in df_active.columns and not df_active[sev_col].dropna().empty:
+                    df_sev = df_active[sev_col].value_counts().reset_index()
+                    df_sev.columns = ['Severity', 'Count']
+                    fig_sev = px.pie(df_sev, names='Severity', values='Count', hole=0.6, template="plotly_dark", color='Severity', color_discrete_map={'Critical':'#E53935', 'High':'#F57C00', 'Medium':'#FFB300', 'Low':'#03A9F4'})
+                    fig_sev.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='#B0B3BC'), margin=dict(t=10, b=10, l=10, r=10), showlegend=True, legend=dict(orientation='h', yanchor='top', y=-0.05, xanchor='center', x=0.5, font=dict(size=10)))
+                    fig_sev.update_traces(textposition='inside', textinfo='percent', insidetextorientation='radial')
+                    st.plotly_chart(fig_sev, use_container_width=True)
+                    
+                    with st.expander("📋 View & Copy Data"):
+                        st.dataframe(df_sev, hide_index=True, use_container_width=True)
+                else: 
+                    st.markdown('<div class="empty-state">No Severity data available.</div>', unsafe_allow_html=True)
+
+        with col_d2:
+            with st.container(border=True):
+                st.markdown('<div class="grid-title">Top Actionable Patches / Updates</div>', unsafe_allow_html=True)
+                if 'RecommendedSecurityUpdate' in df_active.columns and not df_active['RecommendedSecurityUpdate'].dropna().empty:
+                    df_patch = df_active[df_active['RecommendedSecurityUpdate'].astype(str).str.lower() != 'none']
+                    if not df_patch.empty:
+                        df_patch = df_patch['RecommendedSecurityUpdate'].fillna('Unknown').value_counts().head(10).reset_index()
+                        df_patch.columns = ['Security Update', 'Count']
+                        
+                        fig_patch = px.bar(df_patch, y='Security Update', x='Count', orientation='h', template="plotly_dark", color_discrete_sequence=['#3B82F6'])
+                        fig_patch.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='#B0B3BC', size=11), yaxis={'categoryorder':'total ascending'}, xaxis_title="", yaxis_title="", margin=dict(t=10, b=0, l=0, r=0))
+                        st.plotly_chart(fig_patch, use_container_width=True)
+                        
+                        with st.expander("📋 View & Copy Data"):
+                            st.dataframe(df_patch, hide_index=True, use_container_width=True)
+                    else:
+                        st.markdown('<div class="empty-state">No Specific Patches recommended in this view.</div>', unsafe_allow_html=True)
+                else:
+                    st.markdown('<div class="empty-state">No Patch Recommendation data available.</div>', unsafe_allow_html=True)
+            
+        with col_d3:
+            with st.container(border=True):
+                st.markdown('<div class="grid-title">Top 5 Devices with Findings</div>', unsafe_allow_html=True)
+                if 'DeviceName' in df_active.columns and not df_active['DeviceName'].dropna().empty:
+                    df_dev = df_active['DeviceName'].value_counts().head(5).reset_index()
+                    df_dev.columns = ['Device Name', 'Count']
+                    fig_dev = px.pie(df_dev, names='Device Name', values='Count', hole=0.6, template="plotly_dark", color_discrete_sequence=px.colors.sequential.Blues_r)
+                    fig_dev.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='#B0B3BC'), margin=dict(t=10, b=10, l=10, r=10), showlegend=True, legend=dict(orientation='h', yanchor='top', y=-0.05, xanchor='center', x=0.5, font=dict(size=10)))
+                    fig_dev.update_traces(textposition='inside', textinfo='percent', insidetextorientation='radial')
+                    st.plotly_chart(fig_dev, use_container_width=True)
+                    
+                    with st.expander("📋 View & Copy Data"):
+                        st.dataframe(df_dev, hide_index=True, use_container_width=True)
+                else: 
+                    st.markdown('<div class="empty-state">No Device data available in this view.</div>', unsafe_allow_html=True)
+
+# =====================================================================
+# PAGE 2: SEARCH, FILTERS & MITIGATION
+# =====================================================================
+elif st.session_state.screen_mode == "Search & Mitigation":
+    st.title("Advanced Search and Mitigation")
+    
+    if df_actual.empty:
+        st.info("Upload and process data to use the tool.")
+    else:
+        df_filtered = df_actual.copy()
+        sev_col = 'Severity' if 'Severity' in df_filtered.columns else None
+        
+        st.markdown('<div class="filter-panel">', unsafe_allow_html=True)
+        st.markdown("##### Global Search & Filters")
+        
+        busqueda_global = st.text_input("Global Search:", placeholder="Account ID, CVE, Component, Hostname...")
+        if busqueda_global:
+            mascara_busqueda = pd.Series(False, index=df_filtered.index)
+            for col in df_filtered.columns:
+                mascara_busqueda = mascara_busqueda | df_filtered[col].astype(str).str.contains(busqueda_global, case=False, na=False)
+            df_filtered = df_filtered[mascara_busqueda]
+        
+        st.markdown("<hr style='margin: 10px 0;'>", unsafe_allow_html=True)
+        
+        col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+        with col_f1:
+            if 'Status' in df_filtered.columns:
+                filtro_estado = st.selectbox("Status", ["🔴 Active", "All", "✅ Mitigated"])
+                if filtro_estado == "🔴 Active": df_filtered = df_filtered[df_filtered['Status'] == '🔴 Active']
+                elif filtro_estado == "✅ Mitigated": df_filtered = df_filtered[df_filtered['Status'].astype(str).str.contains('Mitigat', case=False, na=False)]
+        with col_f2:
+            if sev_col:
+                filtro_sev = st.selectbox("Severity", ["All", "Critical", "High", "Medium", "Low"])
+                if filtro_sev != "All": df_filtered = df_filtered[df_filtered[sev_col].astype(str).str.contains(filtro_sev, case=False, na=False)]
+        with col_f3:
+            if 'Environment' in df_filtered.columns:
+                filtro_area = st.multiselect("Cloud Provider / Region", [str(x) for x in df_actual['Environment'].dropna().unique()])
+                if filtro_area: df_filtered = df_filtered[df_filtered['Environment'].astype(str).isin(filtro_area)]
+        with col_f4:
+            if 'Compliance' in df_filtered.columns:
+                filtro_compliance = st.multiselect("Intune Compliance", [str(x) for x in df_actual['Compliance'].dropna().unique()])
+                if filtro_compliance: df_filtered = df_filtered[df_filtered['Compliance'].astype(str).isin(filtro_compliance)]
+
+        col_f5, col_f6 = st.columns(2)
+        with col_f5:
+            if 'OperatingSystem' in df_filtered.columns:
+                filtro_os = st.multiselect("Operating System", [str(x) for x in df_actual['OperatingSystem'].dropna().unique()])
+                if filtro_os: df_filtered = df_filtered[df_filtered['OperatingSystem'].astype(str).isin(filtro_os)]
+        with col_f6:
+            if 'VulnerableSoftware' in df_filtered.columns:
+                filtro_comp = st.multiselect("Vulnerable Software", [str(x) for x in df_actual['VulnerableSoftware'].dropna().unique()])
+                if filtro_comp: df_filtered = df_filtered[df_filtered['VulnerableSoftware'].astype(str).isin(filtro_comp)]
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        activos_afectados = df_filtered['DeviceName'].nunique() if 'DeviceName' in df_filtered.columns else len(df_filtered)
+        alertas_filtradas = len(df_filtered)
+        st.markdown(f"**Search Results:** {alertas_filtradas} vulnerabilities across {activos_afectados} unique assets.")
+
+        if 'Status' in df_filtered.columns:
+            cols = ['Status'] + [col for col in df_filtered.columns if col not in ['Status', 'Key']]
+            cols.append('Key') 
+            df_filtered = df_filtered[cols]
+
+        df_editado = st.data_editor(
+            df_filtered,
+            use_container_width=True,
+            num_rows="dynamic",
+            key=f"editor_{st.session_state.current_view}",
+            column_config={
+                "Status": st.column_config.SelectboxColumn("Status", options=["🔴 Active", "✅ Manual Mitigation", "✅ Auto-Mitigated"], required=True),
+                "Key": None 
+            }
         )
+
+        st.markdown("---")
+        col_btn1, col_btn2, col_btn3 = st.columns([2, 2, 4])
+        with col_btn1:
+            if st.button("Save Mitigations"):
+                try:
+                    if st.session_state.current_view == "GLOBAL":
+                        df_maestro = pd.read_csv('datos_correlacionados/base_global_maestra.csv')
+                        df_maestro = standardize_columns(df_maestro)
+                        df_maestro = df_maestro.drop_duplicates(subset=['Key'])
+                        
+                        df_maestro.set_index('Key', inplace=True)
+                        df_editado_seguro = df_editado.drop_duplicates(subset=['Key']).copy()
+                        df_editado_seguro.set_index('Key', inplace=True)
+                        
+                        df_maestro.update(df_editado_seguro[['Status']])
+                        df_maestro.reset_index(inplace=True)
+                        
+                        df_maestro.to_csv('datos_correlacionados/base_global_maestra.csv', index=False)
+                        st.cache_data.clear() 
+                        st.success("Mitigations successfully saved to Master Database.")
+                    else:
+                        os.makedirs('datos_editados/individuales', exist_ok=True)
+                        df_editado.to_csv(f"datos_editados/individuales/{st.session_state.current_view}_status.csv", index=False)
+                        st.cache_data.clear()
+                        st.success("Mitigations saved in individual view.")
+                except Exception as e:
+                    st.error(f"Error saving data: {e}")
+        with col_btn2:
+            export_name = f"Vulnerability_Report_{st.session_state.current_view}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+            df_export = df_editado.drop(columns=['Key'], errors='ignore')
+            st.download_button("Export to CSV", data=df_export.to_csv(index=False).encode('utf-8'), file_name=export_name)
+
+
+# =====================================================================
+# PAGE 3: PATCH MANAGEMENT (Con Filtro CVE y KPIs en estilo cs-card)
+# =====================================================================
+elif st.session_state.screen_mode == "Patch Management":
+    st.title("🛠️ Patch Management & Prioritization")
+    
+    if df_actual.empty:
+        st.info("Upload and process data to use the tool.")
+    else:
+        # Patch Management se enfoca SOLO en las vulnerabilidades Activas
+        df_patching = df_actual[df_actual['Status'] == '🔴 Active'].copy()
+        sev_col = 'Severity' if 'Severity' in df_patching.columns else None
+        
+        st.markdown('<div class="filter-panel">', unsafe_allow_html=True)
+        st.markdown("##### Filter by Target Architecture")
+        col_p1, col_p2, col_p3, col_p4 = st.columns(4)
+        
+        with col_p1:
+            if 'OperatingSystem' in df_patching.columns:
+                filtro_os_p = st.multiselect("Target OS", [str(x) for x in df_patching['OperatingSystem'].dropna().unique()])
+                if filtro_os_p: df_patching = df_patching[df_patching['OperatingSystem'].astype(str).isin(filtro_os_p)]
+        
+        with col_p2:
+            if 'RecommendedSecurityUpdate' in df_patching.columns:
+                filtro_patch = st.multiselect("Specific Patch/KB", [str(x) for x in df_patching['RecommendedSecurityUpdate'].dropna().unique() if str(x).lower() != 'none'])
+                if filtro_patch: df_patching = df_patching[df_patching['RecommendedSecurityUpdate'].astype(str).isin(filtro_patch)]
+        
+        # NUEVO FILTRO POR CVE AQUÍ
+        with col_p3:
+            if 'CveId' in df_patching.columns:
+                filtro_cve_p = st.multiselect("Specific CVE", [str(x) for x in df_actual['CveId'].dropna().unique()])
+                if filtro_cve_p: df_patching = df_patching[df_patching['CveId'].astype(str).isin(filtro_cve_p)]
+
+        with col_p4:
+             if sev_col:
+                filtro_sev_p = st.multiselect("Severity Filter", ["Critical", "High", "Medium", "Low"])
+                if filtro_sev_p: df_patching = df_patching[df_patching[sev_col].astype(str).isin(filtro_sev_p)]
+                
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        # FORZAR a que las Críticas siempre salgan primero
+        if sev_col and sev_col in df_patching.columns:
+            sort_map = {'Critical': 1, 'High': 2, 'Medium': 3, 'Low': 4, 'Unrated': 5}
+            df_patching['_sort_rank'] = df_patching[sev_col].map(sort_map).fillna(6)
+            df_patching = df_patching.sort_values(by=['_sort_rank', 'DeviceName']).drop(columns=['_sort_rank'])
+
+        # CÁLCULO DE KPIs
+        crit_count = len(df_patching[df_patching[sev_col].astype(str).str.contains('Critical', case=False, na=False)]) if sev_col else 0
+        high_count = len(df_patching[df_patching[sev_col].astype(str).str.contains('High', case=False, na=False)]) if sev_col else 0
+        activos_afectados = df_patching['DeviceName'].nunique() if 'DeviceName' in df_patching.columns else len(df_patching)
+        
+        # NUEVO DISEÑO DE KPIs (Estilo Dashboard Principal)
+        col_pk1, col_pk2, col_pk3, col_pk4 = st.columns(4)
+        with col_pk1: st.markdown(f'<div class="cs-card border-info"><div class="cs-card-title">Assets to Patch</div><div class="cs-card-value">{activos_afectados}</div><div class="cs-card-footer">Unique Devices</div></div>', unsafe_allow_html=True)
+        with col_pk2: st.markdown(f'<div class="cs-card border-crit"><div class="cs-card-title">Critical Vulnerabilities</div><div class="cs-card-value">{crit_count}</div><div class="cs-card-footer">Needs immediate action</div></div>', unsafe_allow_html=True)
+        with col_pk3: st.markdown(f'<div class="cs-card border-high"><div class="cs-card-title">High Vulnerabilities</div><div class="cs-card-value">{high_count}</div><div class="cs-card-footer">Needs scheduled action</div></div>', unsafe_allow_html=True)
+        with col_pk4: st.markdown(f'<div class="cs-card border-cve"><div class="cs-card-title">Total Pending Findings</div><div class="cs-card-value">{len(df_patching)}</div><div class="cs-card-footer">In current filter</div></div>', unsafe_allow_html=True)
+        
+        # Gráfico Interactivo de Parches
+        if 'RecommendedSecurityUpdate' in df_patching.columns and not df_patching['RecommendedSecurityUpdate'].dropna().empty:
+            df_graph = df_patching[df_patching['RecommendedSecurityUpdate'].astype(str).str.lower() != 'none']
+            if not df_graph.empty:
+                df_top = df_graph['RecommendedSecurityUpdate'].value_counts().head(10).reset_index()
+                df_top.columns = ['Security Update', 'Count']
+                fig_p = px.bar(df_top, y='Security Update', x='Count', orientation='h', template="plotly_dark", color_discrete_sequence=['#10B981'], title="Top Actionable Patches Needed")
+                fig_p.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', yaxis={'categoryorder':'total ascending'}, margin=dict(t=30, b=0, l=0, r=0))
+                st.plotly_chart(fig_p, use_container_width=True)
+
+        # Editor de datos ordenado
+        if 'Status' in df_patching.columns:
+            cols = ['Status'] + [col for col in df_patching.columns if col not in ['Status', 'Key']]
+            cols.append('Key') 
+            df_patching = df_patching[cols]
+
+        st.markdown("##### Prioritized Patching List")
+        df_editado_p = st.data_editor(
+            df_patching,
+            use_container_width=True,
+            num_rows="dynamic",
+            key=f"editor_patch_{st.session_state.current_view}",
+            column_config={"Status": st.column_config.SelectboxColumn("Status", options=["🔴 Active", "✅ Manual Mitigation", "✅ Auto-Mitigated"], required=True), "Key": None}
+        )
+
+        st.markdown("---")
+        col_bp1, col_bp2 = st.columns([2, 6])
+        with col_bp1:
+            if st.button("Save Mitigations", key="btn_save_patch"):
+                try:
+                    if st.session_state.current_view == "GLOBAL":
+                        df_maestro = pd.read_csv('datos_correlacionados/base_global_maestra.csv')
+                        df_maestro = standardize_columns(df_maestro)
+                        df_maestro = df_maestro.drop_duplicates(subset=['Key'])
+                        
+                        df_maestro.set_index('Key', inplace=True)
+                        df_editado_seguro = df_editado_p.drop_duplicates(subset=['Key']).copy()
+                        df_editado_seguro.set_index('Key', inplace=True)
+                        
+                        df_maestro.update(df_editado_seguro[['Status']])
+                        df_maestro.reset_index(inplace=True)
+                        
+                        df_maestro.to_csv('datos_correlacionados/base_global_maestra.csv', index=False)
+                        st.cache_data.clear() 
+                        st.success("Mitigations successfully saved to Master Database.")
+                    else:
+                        os.makedirs('datos_editados/individuales', exist_ok=True)
+                        df_editado_p.to_csv(f"datos_editados/individuales/{st.session_state.current_view}_status.csv", index=False)
+                        st.cache_data.clear()
+                        st.success("Mitigations saved in individual view.")
+                except Exception as e:
+                    st.error(f"Error saving data: {e}")
+        with col_bp2:
+            export_name = f"Patch_Plan_{st.session_state.current_view}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+            df_export = df_editado_p.drop(columns=['Key'], errors='ignore')
+            st.download_button("Export Prioritized List", data=df_export.to_csv(index=False).encode('utf-8'), file_name=export_name)
