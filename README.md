@@ -23,6 +23,29 @@ por alto una vulnerabilidad crítica recurrente.
    clasifica cada hallazgo como **Nueva**, **Recurrente** o **Mitigada**.
 4. Un dashboard en **Streamlit** muestra KPIs, tablas filtrables por consulta,
    gráficos de criticidad y, opcionalmente, un resumen ejecutivo generado por un
-   LLM (Anthropic Claude u OpenAI) que **interpreta** los números ya calculados,
+   LLM (Anthropic Claude u OpenAI) que **interpreta** los números ya calculados, sin inventar cifras.
 # GestiondeActivosVulnerabilidades
 Proyecto para la gestión de activos y vulnerabilidades. La interfaz se construirá con **Streamlit** y el almacenamiento y consulta de datos se realizará con **DuckDB**.
+
+### 4.1 Requisitos
+
+- Python 3.10 o superior.
+
+### 4.2 Pasos
+
+```bash
+# 1. Clona o copia la carpeta del proyecto y entra en ella
+cd asset_management
+
+# 2. Crea un entorno virtual (recomendado)
+python3 -m venv venv
+source venv/bin/activate          # En Windows: venv\Scripts\activate
+ 
+  python -m streamlit run main.py
+
+# 3. Instala dependencias
+pip install -r requirements.txt
+
+# 4. Instala dependencias
+
+  python -m streamlit run main.py
